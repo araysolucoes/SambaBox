@@ -246,7 +246,8 @@ def clone_vmdk(vbox, image, disk):
         return
     detail = (result.stderr or '') + (result.stdout or '')
     stale = re.search(r'stored in the media registry', detail, re.I)
-    uuid = re.search(r'value \\{([0-9a-fA-F-]{36})\\} stored in the media registry', detail)
+    # VirtualBox: "value {UUID} stored in the media registry" (ou aspas/parenteses).
+    uuid = re.search(r'value\\s+\\{([0-9a-fA-F-]{36})\\}\\s+stored in the media registry', detail, re.I)
     if not stale or not uuid:
         raise RuntimeError('Falha ao clonar disco: ' + detail)
     log('Registro obsoleto do VMDK detectado. Removendo apenas a referencia antiga do VirtualBox...')
@@ -302,6 +303,11 @@ def main():
         raise RuntimeError(f'A VM {VM_NAME} ja existe. Use --rebuild para preservar backup e recriar.')
     if options.rebuild and not exists:
         raise RuntimeError('A VM nao existe; execute sem --rebuild.')
+    if options.rebuild and exists:
+        current_folder = Path.home() / 'VirtualBox VMs' / VM_NAME
+        current_disk = current_folder / 'ubuntu-server.vdi'
+        if not current_disk.exists():
+            raise RuntimeError('VM atual parece incompleta (sem ubuntu-server.vdi). Use --resume; --rebuild foi bloqueado para evitar backups repetidos.')
 
     adapters = interfaces(vbox)
     print('\nAdaptadores fisicos conectados (rede bridge):')
