@@ -46,15 +46,16 @@ def locate_vbox():
     return next((p for p in options if p and Path(p).is_file()), None)
 
 
-def interfaces():
-    ps = shutil.which('powershell.exe') or shutil.which('powershell')
-    if not ps:
-        raise RuntimeError('PowerShell nao encontrado: necessario para listar adaptadores bridge.')
-    cmd = "Get-NetAdapter | Where-Object {$_.Status -eq 'Up' -and $_.HardwareInterface} | Select-Object -ExpandProperty Name"
-    result = run(ps, '-NoProfile', '-Command', cmd, capture=True)
-    names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+def interfaces(vbox):
+    """Somente interfaces bridge reconhecidas pelo proprio VirtualBox."""
+    result = run(vbox, 'list', 'bridgedifs', capture=True)
+    names = [match.group(1).strip() for match in
+             re.finditer(r'^Name:\\s*(.+)$', result.stdout, flags=re.M)]
     if not names:
-        raise RuntimeError('Nenhum adaptador fisico ativo encontrado. Conecte Wi-Fi/Ethernet e tente novamente.')
+        raise RuntimeError(
+            'VirtualBox nao encontrou interfaces bridge. Verifique o driver '
+            'VirtualBox NDIS6 Bridged Networking Driver nas propriedades '
+            'do adaptador do Windows e execute VBoxManage list bridgedifs.')
     return names
 
 
@@ -216,7 +217,7 @@ def main():
     if re.search(r'^"' + re.escape(VM_NAME) + r'"\s', registered, re.M):
         raise RuntimeError(f'A VM {VM_NAME} ja existe. Nada sera sobrescrito ou apagado.')
 
-    adapters = interfaces()
+    adapters = interfaces(vbox)
     print('\nAdaptadores fisicos conectados (rede bridge):')
     for i, item in enumerate(adapters, 1):
         print(f' {i}. {item}')
