@@ -250,8 +250,11 @@ def main():
     log('Verificando VirtualBox...')
     print(run(vbox, '--version', capture=True).stdout.strip())
     registered = run(vbox, 'list', 'vms', capture=True).stdout
-    if re.search(r'^"' + re.escape(VM_NAME) + r'"\s', registered, re.M):
-        raise RuntimeError(f'A VM {VM_NAME} ja existe. Nada sera sobrescrito ou apagado.')
+    exists = bool(re.search(r'^"' + re.escape(VM_NAME) + r'"\s', registered, re.M))
+    if exists and not options.rebuild:
+        raise RuntimeError(f'A VM {VM_NAME} ja existe. Use --rebuild para preservar backup e recriar.')
+    if options.rebuild and not exists:
+        raise RuntimeError('A VM nao existe; execute sem --rebuild.')
 
     adapters = interfaces(vbox)
     print('\nAdaptadores fisicos conectados (rede bridge):')
@@ -276,7 +279,6 @@ def main():
     manifest = urllib.request.urlopen(BASE + 'SHA256SUMS', timeout=40).read().decode('utf-8')
     checksum(image, manifest)
     if options.rebuild:
-        old_image = image
         backup = backup_existing_vm(vbox, folder)
         folder.mkdir(parents=True, exist_ok=False)
         shutil.copy2(backup / IMAGE, image)
