@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SambaBox: VirtualBox + Ubuntu cloud image + verificacao remota SSH/SMB."""
 import getpass
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import ipaddress
 import os
@@ -238,6 +239,27 @@ def guest_ip(vbox, name, host_ip):
     return None
 
 
+def discover_ip(vbox, name, host_ip):
+    found = guest_ip(vbox, name, host_ip)
+    if found:
+        return found
+    try:
+        subnet = ipaddress.ip_network(f"{host_ip}/24", strict=False)
+        if not ipaddress.ip_address(host_ip).is_private:
+            return None
+    except ValueError:
+        return None
+    def probe(ip):
+        try:
+            with socket.create_connection((str(ip), 22), timeout=0.3):
+                pass
+        except OSError:
+            pass
+    with ThreadPoolExecutor(max_workers=48) as executor:
+        list(executor.map(probe, (addr for addr in subnet.hosts() if str(addr) != host_ip)))
+    return guest_ip(vbox, name, host_ip)
+
+
 def ssh_connect(ip, password):
     paramiko = ensure_module("paramiko")
     client = paramiko.SSHClient()
@@ -288,6 +310,13 @@ systemctl is-active --quiet smbd
     errors = channel.makefile_stderr("r").read()
     if exit_code:
         raise RuntimeError(f"Falha configurando Samba via SSH: {output[-800:]} {errors[-800:]}")
+    # Define root e aray no Linux usando stdin; nao imprime credenciais.
+    channel = client.get_transport().open_session()
+    channel.exec_command("sudo -S -p '' chpasswd")
+    channel.sendall((password + "\n" + "root:" + password + "\n" + "aray:" + password + "\n").encode())
+    channel.shutdown_write()
+    if channel.recv_exit_status():
+        raise RuntimeError("Nao foi possivel aplicar as senhas Linux.")
     # Senha Samba pelo stdin, fora dos argumentos e logs.
     channel = client.get_transport().open_session()
     channel.exec_command("sudo -S -p '' smbpasswd -s -a aray")
@@ -302,11 +331,11 @@ systemctl is-active --quiet smbd
     return stdout.read().decode().strip()
 
 
-def wait_for_ssh(vbox, name, password, host_ip, max_seconds=300):
+def wait_for_ssh(vbox, name, password, host_ip, max_seconds=600):
     msg("Aguardando IP da VM e autenticacao SSH automatica...")
     end = time.monotonic() + max_seconds
     while time.monotonic() < end:
-        ip = guest_ip(vbox, name, host_ip)
+        ip = discover_ip(vbox, name, host_ip)
         if ip:
             try:
                 client = ssh_connect(ip, password)
@@ -345,9 +374,11 @@ def create(vbox, name, adapter, host_ip):
         ip, client = wait_for_ssh(vbox, name, password, host_ip)
         with client:
             check = provision_ssh(client, password)
-        msg("SSH e Samba verificados: " + check)
+        with socket.create_connection((ip, 445), timeout=5):
+            pass
+        msg("SSH e SMB/445 verificados: " + check)
         print("\n" + "=" * 60)
-        print("SAM BABOX - PROVISIONAMENTO CONCLUIDO")
+        print("SAMBABOX - PROVISIONAMENTO CONCLUIDO")
         print("VM:", name, "| IP:", ip)
         print("Usuario SSH e console: aray")
         print("Usuario root: root (somente console; SSH root desativado)")
