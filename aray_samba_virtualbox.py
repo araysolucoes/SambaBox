@@ -105,8 +105,23 @@ def seed_iso(folder, password):
         import pycdlib
     except ImportError:
         log('Instalando dependencia pycdlib...')
+        # Instalar no interpretador atual. Em alguns Windows, --user instala
+        # em diretorio nao presente no sys.path da sessao ja iniciada.
+        import site
+        user_site = site.getusersitepackages()
         run(sys.executable, '-m', 'pip', 'install', '--user', 'pycdlib')
-        import pycdlib
+        if user_site not in sys.path:
+            site.addsitedir(user_site)
+        import importlib
+        importlib.invalidate_caches()
+        try:
+            pycdlib = importlib.import_module('pycdlib')
+        except ImportError as exc:
+            raise RuntimeError(
+                'pycdlib foi instalado, mas nao ficou acessivel no Python atual. '
+                'Execute: py -m pip show pycdlib; py -m site; '
+                'ou instale em um ambiente virtual (venv).'
+            ) from exc
 
     # Cloud-init NoCloud; senha armazenada em texto claro no ISO de seed.
     # O arquivo ISO permanece LOCAL. Proteja o acesso a pasta e exclua apos provisionar.
