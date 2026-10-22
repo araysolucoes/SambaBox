@@ -210,7 +210,7 @@ final_message: 'Ubuntu Server + Samba finalizado. Confira /var/log/aray-samba-st
 def backup_existing_vm(vbox, folder):
     """Desregistra a VM antiga SEM apagar arquivos e arquiva seu diretorio."""
     known = run(vbox, 'list', 'vms', capture=True).stdout
-    if not re.search(r'^"' + re.escape(VM_NAME) + r'"\\s', known, re.M):
+    if not re.search(r'^"' + re.escape(VM_NAME) + r'"\s', known, re.M):
         raise RuntimeError('Nao existe VM registrada para reconstruir.')
     if not folder.is_dir():
         raise RuntimeError('Diretorio antigo da VM nao encontrado; nada foi alterado.')
