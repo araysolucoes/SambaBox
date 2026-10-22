@@ -80,10 +80,13 @@ def download(url, path):
 
 
 def checksum(path, checksums):
-    line = next((line for line in checksums.splitlines() if re.fullmatch(r'[0-9a-fA-F]{64}\\s+\\*?' + re.escape(path.name), line.strip())), None)
-    if not line:
+    entries = (line.strip().split(maxsplit=1) for line in checksums.splitlines())
+    expected = next((parts[0].lower() for parts in entries
+                     if len(parts) == 2 and len(parts[0]) == 64
+                     and all(c in '0123456789abcdefABCDEF' for c in parts[0])
+                     and parts[1].lstrip('*').removeprefix('./') == path.name), None)
+    if not expected:
         raise RuntimeError(f'Arquivo {path.name} nao consta no manifesto SHA256 oficial. Verifique a versao da imagem.')
-    expected = line.split()[0].lower()
     digest = hashlib.sha256()
     with path.open('rb') as f:
         for block in iter(lambda: f.read(4 * 1024 * 1024), b''):
