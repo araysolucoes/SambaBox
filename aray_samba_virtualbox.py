@@ -50,8 +50,9 @@ def locate_vbox():
 def interfaces(vbox):
     """Somente interfaces bridge reconhecidas pelo proprio VirtualBox."""
     result = run(vbox, 'list', 'bridgedifs', capture=True)
-    names = [match.group(1).strip() for match in
-             re.finditer(r'^Name:\\s*(.+)$', result.stdout, flags=re.M)]
+    # VBoxManage retorna blocos com "Name: ..."; evita regex e problemas de escape.
+    names = [line.split(':', 1)[1].strip() for line in result.stdout.splitlines()
+             if line.startswith('Name:') and line.split(':', 1)[1].strip()]
     if not names:
         raise RuntimeError(
             'VirtualBox nao encontrou interfaces bridge. Verifique o driver '
