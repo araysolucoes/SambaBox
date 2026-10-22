@@ -270,12 +270,20 @@ def ssh_connect(ip, password):
 
 
 def provision_ssh(client, password):
+    # Aguarda o cloud-init antes de executar apt e configurar os servicos.
+    _, status_out, status_err = client.exec_command("cloud-init status --wait", timeout=600)
+    if status_out.channel.recv_exit_status():
+        msg("Aviso: cloud-init falhou; tentaremos instalar o Samba por SSH.")
     # Usa sudo com senha por stdin, nao concatena a senha em comandos do shell.
-    script = """set -eu
+    script = """set -eux
 id aray
 id root
 command -v sshd
-command -v smbd
+if ! command -v smbd >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y samba
+fi
 mkdir -p /srv/samba/empresa
 chown aray:aray /srv/samba/empresa
 chmod 0700 /srv/samba/empresa
@@ -425,13 +433,20 @@ def main():
             raise RuntimeError("VM invalida.")
         selected = all_vms[int(raw) - 1]
     if option == "2":
-        ip = input("IP da VM existente (se conhecido): ").strip()
+        _, host_ip = choose_adapter(vbox)
+        ip = discover_ip(vbox, selected, host_ip)
         if not ip:
-            raise RuntimeError("Reaproveitamento requer IP existente; nao altera credenciais.")
-        password = getpass.getpass("Senha atual da VM: ")
+            ip = input("IP da VM (nao identificado automaticamente): ").strip()
+        if not ip:
+            raise RuntimeError("IP nao encontrado; VM preservada.")
+        password = getpass.getpass("Senha atual do usuario aray: ")
         with ssh_connect(ip, password) as client:
             print(provision_ssh(client, password))
-        msg("VM reaproveitada e Samba validado.")
+        with socket.create_connection((ip, 445), timeout=5):
+            pass
+        msg("SSH autenticado e Samba ativo na porta 445.")
+        print("SSH: ssh aray@" + ip)
+        print("SMB: " + chr(92)*2 + ip + chr(92) + "Empresa")
         return
     adapter, host_ip = choose_adapter(vbox)
     if option == "3":
