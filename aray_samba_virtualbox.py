@@ -393,8 +393,10 @@ Guarde a senha com seguranca. SMB nao deve ser exposto a internet.
 
 
 if __name__ == '__main__':
+    # Entrada principal retrocompativel: usa o assistente SambaBox v2.
+    from sambabox import main as sambabox_main
     try:
-        main()
+        sambabox_main()
     except (RuntimeError, OSError, ValueError, urllib.error.URLError) as exc:
         print(f'\nERRO: {exc}', file=sys.stderr)
         sys.exit(1)
