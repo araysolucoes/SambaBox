@@ -80,16 +80,16 @@ def download(url, path):
 
 
 def checksum(path, checksums):
-    line = next((line for line in checksums.splitlines() if line.strip().endswith(' ' + path.name)), None)
+    line = next((line for line in checksums.splitlines() if re.fullmatch(r'[0-9a-fA-F]{64}\\s+\\*?' + re.escape(path.name), line.strip())), None)
     if not line:
-        raise RuntimeError('Checksum SHA256 da imagem nao consta no manifesto oficial.')
+        raise RuntimeError(f'Arquivo {path.name} nao consta no manifesto SHA256 oficial. Verifique a versao da imagem.')
     expected = line.split()[0].lower()
     digest = hashlib.sha256()
     with path.open('rb') as f:
         for block in iter(lambda: f.read(4 * 1024 * 1024), b''):
             digest.update(block)
     if digest.hexdigest() != expected:
-        raise RuntimeError('Falha de integridade SHA256! Exclua o VMDK baixado e execute novamente.')
+        raise RuntimeError('SHA256 divergente. O arquivo local pode estar incompleto ou a imagem oficial pode ter sido atualizada. Renomeie o VMDK local para backup e baixe novamente; nao desative a verificacao.')
     log('Imagem verificada com SHA256 oficial.')
 
 
