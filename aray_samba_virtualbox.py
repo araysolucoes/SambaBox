@@ -245,14 +245,20 @@ def clone_vmdk(vbox, image, disk):
     if result.returncode == 0:
         return
     detail = (result.stderr or '') + (result.stdout or '')
-    stale = re.search(r'stored in the media registry', detail, re.I)
-    # VirtualBox: "value {UUID} stored in the media registry" (ou aspas/parenteses).
-    uuid = re.search(r'value\\s+\\{([0-9a-fA-F-]{36})\\}\\s+stored in the media registry', detail, re.I)
-    if not stale or not uuid:
+    marker = ' stored in the media registry'
+    before, found, _ = detail.partition(marker)
+    # Exemplo: "... does not match the value {UUID} stored in the media registry"
+    candidate = before.rsplit('value {', 1)[-1].split('}', 1)[0] if 'value {' in before else ''
+    try:
+        import uuid as uuidlib
+        old_uuid = str(uuidlib.UUID(candidate)) if found else None
+    except ValueError:
+        old_uuid = None
+    if not old_uuid:
         raise RuntimeError('Falha ao clonar disco: ' + detail)
     log('Registro obsoleto do VMDK detectado. Removendo apenas a referencia antiga do VirtualBox...')
     # closemedium sem --delete: nunca exclui a imagem ou o backup.
-    close = run(vbox, 'closemedium', 'disk', uuid.group(1), check=False, capture=True)
+    close = run(vbox, 'closemedium', 'disk', old_uuid, check=False, capture=True)
     if close.returncode:
         raise RuntimeError('Nao foi possivel liberar registro do VMDK. Nenhum disco foi excluido. ' + (close.stderr or close.stdout or ''))
     run(vbox, 'clonemedium', 'disk', str(image), str(disk), '--format', 'VDI')
