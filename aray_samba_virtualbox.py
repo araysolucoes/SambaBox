@@ -2,6 +2,7 @@
 """Aray Solucoes: provisiona Ubuntu Server LTS + Samba no VirtualBox (Windows).
 Requer Python 3.10+, VirtualBox 7.x e pycdlib (instalado automaticamente se ausente).
 """
+import argparse
 import getpass
 import hashlib
 import os
@@ -205,7 +206,42 @@ final_message: 'Ubuntu Server + Samba finalizado. Confira /var/log/aray-samba-st
     return iso_path
 
 
+def backup_existing_vm(vbox, folder):
+    """Desregistra a VM antiga SEM apagar arquivos e arquiva seu diretorio."""
+    known = run(vbox, 'list', 'vms', capture=True).stdout
+    if not re.search(r'^"' + re.escape(VM_NAME) + r'"\\s', known, re.M):
+        raise RuntimeError('Nao existe VM registrada para reconstruir.')
+    if not folder.is_dir():
+        raise RuntimeError('Diretorio antigo da VM nao encontrado; nada foi alterado.')
+    state = run(vbox, 'showvminfo', VM_NAME, '--machinereadable', capture=True).stdout
+    if 'VMState="running"' in state or 'VMState="paused"' in state:
+        log('Solicitando desligamento da VM antiga...')
+        run(vbox, 'controlvm', VM_NAME, 'acpipowerbutton', check=False)
+        for _ in range(20):
+            time.sleep(1)
+            state = run(vbox, 'showvminfo', VM_NAME, '--machinereadable', capture=True).stdout
+            if 'VMState="poweroff"' in state or 'VMState="aborted"' in state:
+                break
+        else:
+            log('Desligamento normal nao respondeu; desligando a VM para preservar o disco como backup.')
+            run(vbox, 'controlvm', VM_NAME, 'poweroff')
+    elif 'VMState="saved"' in state:
+        raise RuntimeError('VM em estado salvo. Descarte o estado salvo no VirtualBox antes de reconstruir.')
+    log('Desregistrando VM antiga SEM excluir seu disco...')
+    run(vbox, 'unregistervm', VM_NAME)
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    backup = folder.with_name(f'{VM_NAME}-backup-{stamp}')
+    if backup.exists():
+        raise RuntimeError(f'Backup ja existe: {backup}; arquivos antigos permanecem no local.')
+    folder.rename(backup)
+    log(f'Backup preservado em: {backup}')
+    return backup
+
+
 def main():
+    parser = argparse.ArgumentParser(description='Provisionar Samba no VirtualBox')
+    parser.add_argument('--rebuild', action='store_true', help='Reconstruir VM, preservando a anterior em pasta backup')
+    options = parser.parse_args()
     if os.name != 'nt':
         raise RuntimeError('Este script foi desenvolvido para host Windows 10/11 com VirtualBox.')
     vbox = locate_vbox()
@@ -232,12 +268,19 @@ def main():
         raise RuntimeError('Senhas nao conferem.')
 
     folder = Path.home() / 'VirtualBox VMs' / VM_NAME
-    folder.mkdir(parents=True, exist_ok=True)
+    if not options.rebuild:
+        folder.mkdir(parents=True, exist_ok=True)
     image = folder / IMAGE
     download(BASE + IMAGE, image)
     log('Consultando somas SHA256 oficiais...')
     manifest = urllib.request.urlopen(BASE + 'SHA256SUMS', timeout=40).read().decode('utf-8')
     checksum(image, manifest)
+    if options.rebuild:
+        old_image = image
+        backup = backup_existing_vm(vbox, folder)
+        folder.mkdir(parents=True, exist_ok=False)
+        shutil.copy2(backup / IMAGE, image)
+        log('Imagem Ubuntu reutilizada do backup.')
     seed = seed_iso(folder, password)
     log(f'Criando VM {VM_NAME} / 4GB RAM / 2 vCPU / bridge {adapter}')
     # A VM criada nao interfere em VMs existentes.
