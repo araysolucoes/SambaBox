@@ -351,7 +351,12 @@ def create(vbox, name, adapter, host_ip):
     password = secrets.token_urlsafe(18).replace("-", "A").replace("_", "b")
     folder = VM_ROOT / name
     if folder.exists():
-        raise RuntimeError(f"Pasta {folder} ja existe. Nenhum dado sera sobrescrito.")
+        # A exclusao pelo VirtualBox pode deixar arquivos locais nao registrados.
+        # Preserva tudo em vez de sobrescrever ou excluir dados existentes.
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        archive = VM_ROOT / f"{name}-orphan-backup-{stamp}-{secrets.token_hex(3)}"
+        folder.rename(archive)
+        msg(f"Pasta residual preservada em: {archive}")
     folder.mkdir(parents=True)
     iso = seed(folder, password, f"sambabox-{secrets.token_hex(10)}")
     msg("Criando VM: " + name)
