@@ -239,9 +239,52 @@ def backup_existing_vm(vbox, folder):
     return backup
 
 
+def clone_vmdk(vbox, image, disk):
+    """Corrige apenas registro obsoleto da imagem-fonte, sem excluir dados."""
+    result = run(vbox, 'clonemedium', 'disk', str(image), str(disk), '--format', 'VDI', check=False, capture=True)
+    if result.returncode == 0:
+        return
+    detail = (result.stderr or '') + (result.stdout or '')
+    stale = re.search(r'stored in the media registry', detail, re.I)
+    uuid = re.search(r'value \\{([0-9a-fA-F-]{36})\\} stored in the media registry', detail)
+    if not stale or not uuid:
+        raise RuntimeError('Falha ao clonar disco: ' + detail)
+    log('Registro obsoleto do VMDK detectado. Removendo apenas a referencia antiga do VirtualBox...')
+    # closemedium sem --delete: nunca exclui a imagem ou o backup.
+    close = run(vbox, 'closemedium', 'disk', uuid.group(1), check=False, capture=True)
+    if close.returncode:
+        raise RuntimeError('Nao foi possivel liberar registro do VMDK. Nenhum disco foi excluido. ' + (close.stderr or close.stdout or ''))
+    run(vbox, 'clonemedium', 'disk', str(image), str(disk), '--format', 'VDI')
+
+
+def resume_incomplete(vbox):
+    """Retoma VM com controlador criado e disco ainda nao conectado."""
+    folder = Path.home() / 'VirtualBox VMs' / VM_NAME
+    image = folder / IMAGE
+    seed = folder / 'cloud-init-seed.iso'
+    disk = folder / 'ubuntu-server.vdi'
+    if not image.is_file() or not seed.is_file():
+        raise RuntimeError('Arquivos de origem ou seed ausentes. Reconstrucao nao pode ser retomada.')
+    info = run(vbox, 'showvminfo', VM_NAME, '--machinereadable', capture=True).stdout
+    if 'VMState="poweroff"' not in info and 'VMState="aborted"' not in info:
+        raise RuntimeError('A VM precisa estar desligada para retomar.')
+    if 'SATA-0-0=' in info and not ('SATA-0-0="none"' in info):
+        raise RuntimeError('A VM ja possui disco conectado. Nada foi alterado.')
+    log('Retomando a VM parcial sem reconstruir ou alterar o backup...')
+    if disk.exists():
+        raise RuntimeError(f'Disco parcial existente: {disk}. Nao sera sobrescrito automaticamente.')
+    clone_vmdk(vbox, image, disk)
+    run(vbox, 'modifymedium', 'disk', str(disk), '--resize', str(DISK_GB * 1024))
+    run(vbox, 'storageattach', VM_NAME, '--storagectl', 'SATA', '--port', '0', '--device', '0', '--type', 'hdd', '--medium', str(disk))
+    run(vbox, 'storageattach', VM_NAME, '--storagectl', 'SATA', '--port', '1', '--device', '0', '--type', 'dvddrive', '--medium', str(seed))
+    run(vbox, 'startvm', VM_NAME, '--type', 'gui')
+    log('VM iniciada. Confira cloud-init e usuario apos o boot.')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Provisionar Samba no VirtualBox')
     parser.add_argument('--rebuild', action='store_true', help='Reconstruir VM, preservando a anterior em pasta backup')
+    parser.add_argument('--resume', action='store_true', help='Retomar VM parcialmente criada apos falha no clone VMDK')
     options = parser.parse_args()
     if os.name != 'nt':
         raise RuntimeError('Este script foi desenvolvido para host Windows 10/11 com VirtualBox.')
@@ -251,6 +294,9 @@ def main():
     log('Verificando VirtualBox...')
     print(run(vbox, '--version', capture=True).stdout.strip())
     registered = run(vbox, 'list', 'vms', capture=True).stdout
+    if options.resume:
+        resume_incomplete(vbox)
+        return
     exists = bool(re.search(r'^"' + re.escape(VM_NAME) + r'"\s', registered, re.M))
     if exists and not options.rebuild:
         raise RuntimeError(f'A VM {VM_NAME} ja existe. Use --rebuild para preservar backup e recriar.')
@@ -297,7 +343,7 @@ def main():
         run(vbox, 'storagectl', VM_NAME, '--name', 'SATA', '--add', 'sata', '--controller', 'IntelAhci')
         disk = folder / 'ubuntu-server.vdi'
         log('Clonando imagem oficial para disco gravavel VDI...')
-        run(vbox, 'clonemedium', 'disk', str(image), str(disk), '--format', 'VDI')
+        clone_vmdk(vbox, image, disk)
         run(vbox, 'modifymedium', 'disk', str(disk), '--resize', str(DISK_GB * 1024))
         run(vbox, 'storageattach', VM_NAME, '--storagectl', 'SATA', '--port', '0', '--device', '0', '--type', 'hdd', '--medium', str(disk))
         run(vbox, 'storageattach', VM_NAME, '--storagectl', 'SATA', '--port', '1', '--device', '0', '--type', 'dvddrive', '--medium', str(seed))
